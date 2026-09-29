@@ -230,6 +230,39 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o marp.exe .
 CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o marp .
 ```
 
+---
+
+## 自动编译（GitHub Actions）
+
+工作流位于 `.github/workflows/build.yml`。
+
+**仅在以下两种情况触发，不监听 push / PR / 定时任务：**
+
+| 触发方式 | 行为 |
+| --- | --- |
+| 手动触发（Actions 页面 Run workflow） | 编译全部产物并作为 workflow artifact 下载；勾选 `draft_release` 可顺便建一个 Draft Release |
+| 发布 Release（`published`） | 编译全部产物，自动上传为该 Release 的附件并附带 `SHA256SUMS.txt` |
+
+流水线：`test`（go vet + gofmt 校验 + go test）→ `build`（矩阵编译）→ `checksums` →
+`attach-to-release` / `draft-release`。任一环节失败都会阻断发布。
+
+编译矩阵（均为 `CGO_ENABLED=0` + `-trimpath`，产物可复现）：
+
+| 系统 | 架构 | 产物名 |
+| --- | --- | --- |
+| linux | amd64 / arm64 | `marp-linux-amd64` / `marp-linux-arm64` |
+| linux | armv6 / armv7 | `marp-linux-armv6` / `marp-linux-armv7` |
+| windows | amd64 / arm64 | `marp-windows-amd64.exe` / `marp-windows-arm64.exe` |
+| darwin | amd64 / arm64 | `marp-darwin-amd64` / `marp-darwin-arm64` |
+| android | arm64 | `marp-android-arm64` |
+
+> `android/arm`（32 位）无法用 `CGO_ENABLED=0` 构建，需要外部链接，因此不在矩阵内。
+
+版本号在 CI 中通过 `-ldflags "-X main.version=..."` 注入：发布时取 Release tag，
+手动触发时取输入框（留空则用提交短 SHA），`./marp version` 可以验证。
+
+手动触发一次构建：Actions 页面 → Build workflow → Run workflow。
+
 ### 项目结构
 
 ```

@@ -35,7 +35,9 @@ import (
 	"marp/internal/warpapi"
 )
 
-const version = "1.0.0"
+// version 是程序版本号。CI 编译时通过
+// -ldflags "-X main.version=<tag>" 注入，默认为源码内置版本。
+var version = "1.0.0"
 
 const usage = `marp %s
 
