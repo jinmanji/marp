@@ -1,4 +1,4 @@
-module warp-masque-proxy
+module marp
 
 go 1.27.1
 

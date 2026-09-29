@@ -12,7 +12,7 @@
     "config_file": "warp.json",
     "auto_register": true,
     "accept_tos": true,
-    "device_name": "warp-masque-proxy",
+    "device_name": "marp",
     "model": "PC",
     "locale": "en_US",
     "team_token": ""

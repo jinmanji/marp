@@ -128,7 +128,7 @@ func Default() Config {
 			ConfigFile:   defaultAccountFile,
 			AutoRegister: true,
 			AcceptTOS:    true,
-			DeviceName:   "warp-masque-proxy",
+			DeviceName:   "marp",
 			Model:        "PC",
 			Locale:       "en_US",
 		},

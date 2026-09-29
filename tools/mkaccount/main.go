@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 
-	"warp-masque-proxy/internal/warpapi"
+	"marp/internal/warpapi"
 )
 
 func main() {

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"warp-masque-proxy/internal/appconfig"
+	"marp/internal/appconfig"
 )
 
 // startEcho starts a TCP echo server standing in for a destination that would

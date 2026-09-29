@@ -145,7 +145,7 @@ func (s *Server) logf(format string, args ...any) {
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if !s.Auth.matches(r.Header.Get("Proxy-Authorization")) {
-		w.Header().Set("Proxy-Authenticate", `Basic realm="warp-masque-proxy"`)
+		w.Header().Set("Proxy-Authenticate", `Basic realm="marp"`)
 		http.Error(w, "需要代理认证", http.StatusProxyAuthRequired)
 		s.logf("http 代理: %s %s 认证失败", r.RemoteAddr, r.URL)
 		return

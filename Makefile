@@ -1,4 +1,4 @@
-BINARY := warp-masque-proxy
+BINARY := marp
 GOFLAGS_BUILD := -ldflags="-s -w"
 
 .PHONY: all build test vet fmt tidy clean run

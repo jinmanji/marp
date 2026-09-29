@@ -1,6 +1,6 @@
 # build output
-/warp-masque-proxy
-/warp-masque-proxy.exe
+/marp
+/marp.exe
 
 # runtime state (generated on first run, contains secrets)
 /config.json

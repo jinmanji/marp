@@ -1,4 +1,4 @@
-# warp-masque-proxy
+# marp
 
 首次运行自动注册 Cloudflare WARP 账号，使用 [usque](https://github.com/Diniboy1123/usque)
 核心建立 MASQUE（Connect-IP / RFC 9484）隧道，并以**带用户名密码认证的 HTTP 代理与 SOCKS5 代理**对外提供服务。
@@ -16,10 +16,10 @@
 ## 快速开始
 
 ```bash
-go build -ldflags="-s -w" -o warp-masque-proxy .
+go build -ldflags="-s -w" -o marp .
 
 # 第一次运行：没有 config.json -> 生成配置 + 随机用户名密码 + 自动注册 WARP 账号
-./warp-masque-proxy
+./marp
 
 # 输出示例
 # 未找到配置文件，已生成 config.json
@@ -52,10 +52,10 @@ curl -x socks5h://k3mzq7xapw:Ty9bQ2vLmXp4Rz7Nc1Ha@127.0.0.1:1080 https://www.clo
 ## 命令行
 
 ```
-warp-masque-proxy [run] [选项]        启动 HTTP / SOCKS5 代理（默认命令）
-warp-masque-proxy register [选项]    强制重新注册一个 WARP 账号
-warp-masque-proxy creds [选项]       打印当前代理认证信息
-warp-masque-proxy version            打印版本号
+marp [run] [选项]        启动 HTTP / SOCKS5 代理（默认命令）
+marp register [选项]    强制重新注册一个 WARP 账号
+marp creds [选项]       打印当前代理认证信息
+marp version            打印版本号
 ```
 
 常用 `run` 选项：
@@ -72,7 +72,7 @@ warp-masque-proxy version            打印版本号
 ### 示例：指定端点 + SNI 伪装
 
 ```bash
-./warp-masque-proxy \
+./marp \
   -endpoints 162.159.198.218:443,162.159.198.20:443,162.159.198.5:443 \
   -sni recaptcha.net
 ```
@@ -138,7 +138,7 @@ UDP/443 被封锁时可用 `-mode http2` 强制走 TCP。
     "config_file":   "warp.json",   // 账号配置（与 usque 的 config.json 同格式）
     "auto_register": true,          // 账号缺失时自动注册
     "accept_tos":    true,
-    "device_name":   "warp-masque-proxy",
+    "device_name":   "marp",
     "model":         "PC",
     "locale":        "en_US",
     "team_token":    ""             // 填入 Zero Trust team token 即注册团队账号
@@ -206,9 +206,9 @@ UDP/443 被封锁时可用 `-mode http2` 强制走 TCP。
 其它工具读取 usque 配置：
 
 ```bash
-./warp-masque-proxy creds            # 只看代理认证信息
-./warp-masque-proxy register -force   # 重新注册一个账号
-./warp-masque-proxy -license XXXX    # 注册并绑定 WARP+
+./marp creds            # 只看代理认证信息
+./marp register -force   # 重新注册一个账号
+./marp -license XXXX    # 注册并绑定 WARP+
 ```
 
 ---
@@ -226,8 +226,8 @@ make clean
 跨平台编译：
 
 ```bash
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o warp-masque-proxy.exe .
-CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o warp-masque-proxy .
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o marp.exe .
+CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o marp .
 ```
 
 ### 项目结构
@@ -246,7 +246,7 @@ tools/mkaccount/             仅用于本地冒烟测试：生成一份假账号
 
 ```bash
 go run ./tools/mkaccount /tmp/warp.json
-./warp-masque-proxy -c /tmp/config.json
+./marp -c /tmp/config.json
 ```
 
 `tools/mkaccount` 生成的密钥未经 Cloudflare 入网，隧道一定会报 `login failed`；

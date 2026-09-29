@@ -1,4 +1,4 @@
-// Command warp-masque-proxy registers a Cloudflare WARP account on first use
+// Command marp registers a Cloudflare WARP account on first use
 // and exposes the MASQUE tunnel as an authenticated HTTP and SOCKS5 proxy.
 //
 // The tunnel is driven by the usque core (github.com/Diniboy1123/usque);
@@ -28,22 +28,22 @@ import (
 	usqueconfig "github.com/Diniboy1123/usque/config"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 
-	"warp-masque-proxy/internal/appconfig"
-	"warp-masque-proxy/internal/httpproxy"
-	"warp-masque-proxy/internal/socks5"
-	"warp-masque-proxy/internal/tunnel"
-	"warp-masque-proxy/internal/warpapi"
+	"marp/internal/appconfig"
+	"marp/internal/httpproxy"
+	"marp/internal/socks5"
+	"marp/internal/tunnel"
+	"marp/internal/warpapi"
 )
 
 const version = "1.0.0"
 
-const usage = `warp-masque-proxy %s
+const usage = `marp %s
 
 用法:
-  warp-masque-proxy [run] [选项]        启动 HTTP / SOCKS5 代理（默认命令）
-  warp-masque-proxy register [选项]    强制重新注册一个 WARP 账号
-  warp-masque-proxy creds [选项]       打印当前代理认证信息
-  warp-masque-proxy version            打印版本号
+  marp [run] [选项]        启动 HTTP / SOCKS5 代理（默认命令）
+  marp register [选项]    强制重新注册一个 WARP 账号
+  marp creds [选项]       打印当前代理认证信息
+  marp version            打印版本号
 
 选项:
 `
@@ -109,7 +109,7 @@ func run(args []string, logger *log.Logger) error {
 		case "creds", "credentials":
 			return runCreds(args[1:], logger)
 		case "version", "-v", "--version":
-			fmt.Println("warp-masque-proxy", version)
+			fmt.Println("marp", version)
 			return nil
 		case "help", "-h", "--help":
 			printUsage()
