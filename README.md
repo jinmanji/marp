@@ -253,7 +253,7 @@ CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o marp .
 ### VPS 一键安装
 
 ```bash
-sudo install -m755 <(curl -fsSL https://github.com/jinmanji/marp/releases/latest/download/marp-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64\|arm64/arm64/;s/armv7l/armv7/;s/armv6l/armv6/')) /usr/local/bin/marp && marp version
+curl -fsSL "https://github.com/jinmanji/marp/releases/latest/download/marp-linux-$(uname -m|sed 's/x86_64/amd64/;s/aarch64\|arm64/arm64/;s/armv8l/armv7/;s/armv7l/armv7/;s/armv6l/armv6/')" -o /tmp/marp && sudo install -m755 /tmp/marp /usr/local/bin/marp && marp version
 ```
 
 启动（后台常驻，首次运行会自动注册 WARP 账号并生成随机用户名密码）：
