@@ -3,8 +3,33 @@ on:
   workflow_dispatch:
   release:
     types: [published]
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  GOFLAGS: -trimpath
+  BINARY: marp
 jobs:
   test:
+    name: vet + test
     runs-on: ubuntu-latest
     steps:
-      - run: echo hi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: go vet
+        run: go vet ./...
+      - name: 确认代码已格式化
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未通过 gofmt："
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go test
+        run: go test ./...
