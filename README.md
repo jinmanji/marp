@@ -246,7 +246,21 @@ CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o marp .
 | 发布 Release（`published`） | 编译全部产物，自动上传为该 Release 的附件并附带 `SHA256SUMS.txt` |
 
 流水线：`test`（go vet + gofmt 校验 + go test）→ `build`（矩阵编译）→ `checksums` →
-`attach-to-release` / `draft-release`。任一环节失败都会阻断发布。
+
+`attach-to-release` / `draft-release`。`checksums` 会先核对 9 个产物是否齐全（缺任何一个就退出 1），
+所以**不会出现“发布成功但附件缺文件”**。任一环节失败都会阻断发布。
+
+### VPS 一键安装
+
+```bash
+sudo install -m755 <(curl -fsSL https://github.com/jinmanji/marp/releases/latest/download/marp-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64\|arm64/arm64/;s/armv7l/armv7/;s/armv6l/armv6/')) /usr/local/bin/marp && marp version
+```
+
+启动（后台常驻，首次运行会自动注册 WARP 账号并生成随机用户名密码）：
+
+```bash
+marp &            # 默认 HTTP :8000 / SOCKS5 :1080，配置写入 ./config.json
+```
 
 编译矩阵（均为 `CGO_ENABLED=0` + `-trimpath`，产物可复现）：
 

@@ -135,7 +135,10 @@ jobs:
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: marp-${{ matrix.goos }}-${{ matrix.goarch }}
+          # 必须用 matrix.artifact（文件名）而不是 goos-goarch：
+          # armv6 和 armv7 的 goarch 都是 arm，拼出来的 artifact 名完全相同，
+          # v4 会把其中一份静默丢弃，导致 Release 少一个附件且不报错。
+          name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}
           if-no-files-found: error
           retention-days: 30
@@ -150,6 +153,24 @@ jobs:
           pattern: marp-*
           merge-multiple: true
           path: dist
+
+      - name: 校验产物齐全
+        run: |
+          expected="marp-linux-amd64 marp-linux-arm64 marp-linux-armv6 marp-linux-armv7 \
+                    marp-windows-amd64.exe marp-windows-arm64.exe \
+                    marp-darwin-amd64 marp-darwin-arm64 marp-android-arm64"
+          missing=""
+          for name in $expected; do
+            if [ ! -s "dist/$name" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "缺少产物:$missing"
+            echo "拒绝继续：产物不完整时不应该发布 Release。"
+            exit 1
+          fi
+          echo "全部产物齐全 ($(echo $expected | wc -w) 个)"
 
       - name: 生成 SHA256SUMS
         run: |
@@ -175,7 +196,10 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: marp-*
+          # 同时取二进制与 checksums artifact，后者不在 marp-* 范围内。
+          pattern: |
+            marp-*
+            checksums
           merge-multiple: true
           path: dist
 
@@ -203,7 +227,9 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: marp-*
+          pattern: |
+            marp-*
+            checksums
           merge-multiple: true
           path: dist
 
