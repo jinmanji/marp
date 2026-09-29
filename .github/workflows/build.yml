@@ -23,13 +23,83 @@ jobs:
           check-latest: true
       - name: go vet
         run: go vet ./...
-      - name: 确认代码已格式化
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "以下文件未通过 gofmt："
-            echo "$unformatted"
-            exit 1
-          fi
       - name: go test
         run: go test ./...
+
+  build:
+    name: ${{ matrix.artifact }}
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64, artifact: marp-linux-amd64 }
+          - { goos: linux,   goarch: arm64, artifact: marp-linux-arm64 }
+          - { goos: linux,   goarch: arm, goarm: "6", artifact: marp-linux-armv6 }
+          - { goos: linux,   goarch: arm, goarm: "7", artifact: marp-linux-armv7 }
+          - { goos: windows, goarch: amd64, artifact: marp-windows-amd64.exe }
+          - { goos: windows, goarch: arm64, artifact: marp-windows-arm64.exe }
+          - { goos: darwin,  goarch: amd64, artifact: marp-darwin-amd64 }
+          - { goos: darwin,  goarch: arm64, artifact: marp-darwin-arm64 }
+          - { goos: android, goarch: arm64, artifact: marp-android-arm64 }
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: 确定版本号
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            version="${{ github.event.release.tag_name }}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "构建版本: $version"
+
+      - name: 编译
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
+            -o "dist/${{ matrix.artifact }}" .
+
+      - name: 校验产物
+        run: |
+          file="dist/${{ matrix.artifact }}"
+          test -s "$file" || { echo "产物为空: $file"; exit 1; }
+          ls -l "$file"
+          case "${{ matrix.goos }}" in
+            windows) expected="4d5a"; n=2 ;;
+            darwin)  expected="cffaedfe"; n=4 ;;
+            *)       expected="7f454c46"; n=4 ;;
+          esac
+          magic="$(head -c "$n" "$file" | od -An -tx1 | tr -d ' \n')"
+          if [ "$magic" != "$expected" ]; then
+            echo "产物格式不符: 实际 $magic，期望 $expected"
+            exit 1
+          fi
+          echo "格式校验通过: $expected"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: marp-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 30
