@@ -196,6 +196,23 @@ func runProxy(args []string, logger *log.Logger) error {
 	}
 	defer func() { _ = tunDev(device) }()
 
+	// Hostnames are resolved inside the tunnel through the configured WARP
+	// DNS servers, so clients never leak DNS to the local resolver.
+	dial := func(ctx context.Context, _, address string) (net.Conn, error) {
+		if timeout := cfg.Tunnel.ConnectTimeoutDuration(); timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		return tunNet.DialContext(ctx, "tcp", address)
+	}
+
+	// Bind before touching the network so a port conflict fails fast.
+	servers, err := bindProxies(cfg, dial)
+	if err != nil {
+		return err
+	}
+
 	go tunnel.Run(ctx, tunnel.Options{
 		TLSConfig:            tlsConfigFor(cfg, logger),
 		QUICConfig:           tunnel.DefaultQUICConfig(cfg.Tunnel.KeepaliveDuration(), cfg.Tunnel.InitialPacketSize),
@@ -219,18 +236,7 @@ func runProxy(args []string, logger *log.Logger) error {
 		printCreds(cfg, cfgPath, endpointPool, logger)
 	}
 
-	// Hostnames are resolved inside the tunnel through the configured WARP
-	// DNS servers, so clients never leak DNS to the local resolver.
-	dial := func(ctx context.Context, _, address string) (net.Conn, error) {
-		if timeout := cfg.Tunnel.ConnectTimeoutDuration(); timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, timeout)
-			defer cancel()
-		}
-		return tunNet.DialContext(ctx, "tcp", address)
-	}
-
-	return serveProxies(ctx, cfg, dial, logger)
+	return servers.serve(ctx, logger)
 }
 
 func modeLabel(m tunnel.Mode) string {
@@ -447,24 +453,28 @@ func buildNetstack(cfg appconfig.Config, logger *log.Logger) (api.TunnelDevice, 
 	return api.NewNetstackAdapter(tunDev), tunNet, nil
 }
 
-// serveProxies starts both listeners and blocks until ctx is cancelled.
-// dial opens the outbound connection for a proxied request; in production it
-// goes through the userspace tunnel stack.
-func serveProxies(ctx context.Context, cfg appconfig.Config, dial socks5.DialFunc, logger *log.Logger) error {
+// proxyServers bundles the two bound listeners.
+type proxyServers struct {
+	socks *socks5.Server
+	http  *httpproxy.Server
+}
+
+// bindProxies creates and binds both listeners without serving yet, so that a
+// port conflict is reported immediately and before any tunnel is started.
+func bindProxies(cfg appconfig.Config, dial socks5.DialFunc) (*proxyServers, error) {
 	if dial == nil {
-		return errors.New("缺少拨号器")
+		return nil, errors.New("缺少拨号器")
 	}
 
 	socks := &socks5.Server{
 		Addr:           cfg.Listen.Socks5,
 		Auth:           socks5.Credentials{Username: cfg.Auth.Username, Password: cfg.Auth.Password},
 		Dial:           dial,
-		Logger:         logger,
 		ConnectTimeout: cfg.Tunnel.ConnectTimeoutDuration(),
 		IdleTimeout:    5 * time.Minute,
 	}
 	if err := socks.Listen(); err != nil {
-		return err
+		return nil, err
 	}
 
 	httpSrv := &httpproxy.Server{
@@ -472,24 +482,30 @@ func serveProxies(ctx context.Context, cfg appconfig.Config, dial socks5.DialFun
 		Auth:           httpproxy.Credentials{Username: cfg.Auth.Username, Password: cfg.Auth.Password},
 		Dial:           dial,
 		Relay:          api.RelayTCP,
-		Logger:         logger,
 		ConnectTimeout: cfg.Tunnel.ConnectTimeoutDuration(),
 	}
 	if err := httpSrv.Listen(); err != nil {
 		_ = socks.Close()
-		return err
+		return nil, err
 	}
+	return &proxyServers{socks: socks, http: httpSrv}, nil
+}
+
+// serve starts both listeners and blocks until ctx is cancelled.
+func (p *proxyServers) serve(ctx context.Context, logger *log.Logger) error {
+	p.socks.Logger = logger
+	p.http.Logger = logger
 
 	errs := make(chan error, 2)
 	go func() {
-		logger.Printf("SOCKS5 代理已监听 %s", socks.BoundAddr())
-		if err := socks.Serve(); err != nil {
+		logger.Printf("SOCKS5 代理已监听 %s", p.socks.BoundAddr())
+		if err := p.socks.Serve(); err != nil {
 			errs <- err
 		}
 	}()
 	go func() {
-		logger.Printf("HTTP 代理已监听 %s", httpSrv.BoundAddr())
-		if err := httpSrv.Serve(); err != nil {
+		logger.Printf("HTTP 代理已监听 %s", p.http.BoundAddr())
+		if err := p.http.Serve(); err != nil {
 			errs <- err
 		}
 	}()
@@ -503,9 +519,20 @@ func serveProxies(ctx context.Context, cfg appconfig.Config, dial socks5.DialFun
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = httpSrv.Close(shutdownCtx)
-	_ = socks.Close()
+	_ = p.http.Close(shutdownCtx)
+	_ = p.socks.Close()
 	return nil
+}
+
+// serveProxies binds both listeners and serves until ctx is cancelled. dial
+// opens the outbound connection for a proxied request; in production it goes
+// through the userspace tunnel stack.
+func serveProxies(ctx context.Context, cfg appconfig.Config, dial socks5.DialFunc, logger *log.Logger) error {
+	servers, err := bindProxies(cfg, dial)
+	if err != nil {
+		return err
+	}
+	return servers.serve(ctx, logger)
 }
 
 func printCreds(cfg appconfig.Config, cfgPath string, endpoints []tunnel.Endpoint, logger *log.Logger) {

@@ -254,6 +254,35 @@ func TestHTTPForwardWithCredentials(t *testing.T) {
 	}
 }
 
+func TestBindProxiesReportsPortConflict(t *testing.T) {
+	echo := startEcho(t)
+	dial := func(ctx context.Context, network, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, network, echo.Addr().String())
+	}
+
+	cfg := appconfig.Default()
+	cfg.Listen.Socks5 = freeAddr(t)
+	cfg.Listen.HTTP = freeAddr(t)
+
+	first, err := bindProxies(cfg, dial)
+	if err != nil {
+		t.Fatalf("bindProxies: %v", err)
+	}
+	defer func() { _ = first.socks.Close() }()
+
+	// The same addresses cannot be bound twice.
+	if _, err := bindProxies(cfg, dial); err == nil {
+		t.Fatal("expected a bind error on a duplicate listen address")
+	}
+}
+
+func TestBindProxiesRequiresDialer(t *testing.T) {
+	if _, err := bindProxies(appconfig.Default(), nil); err == nil {
+		t.Fatal("bindProxies must reject a nil dialer")
+	}
+}
+
 func TestLoadConfigGeneratesRandomCredentials(t *testing.T) {
 	path := t.TempDir() + "/config.json"
 
