@@ -1,5 +1,7 @@
 # marp
 
+[![build](https://github.com/jinmanji/marp/actions/workflows/.github/workflows/build.yml/badge.svg)](https://github.com/jinmanji/marp/actions/workflows/.github/workflows/build.yml)
+
 首次运行自动注册 Cloudflare WARP 账号，使用 [usque](https://github.com/Diniboy1123/usque)
 核心建立 MASQUE（Connect-IP / RFC 9484）隧道，并以**带用户名密码认证的 HTTP 代理与 SOCKS5 代理**对外提供服务。
 
