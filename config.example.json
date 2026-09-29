@@ -1,0 +1,46 @@
+{
+  "listen": {
+    "socks5": "127.0.0.1:1080",
+    "http": "127.0.0.1:8000"
+  },
+  "auth": {
+    "enabled": true,
+    "username": "your-user",
+    "password": "your-password"
+  },
+  "warp": {
+    "config_file": "warp.json",
+    "auto_register": true,
+    "accept_tos": true,
+    "device_name": "warp-masque-proxy",
+    "model": "PC",
+    "locale": "en_US",
+    "team_token": ""
+  },
+  "tunnel": {
+    "endpoints": [
+      "162.159.198.218:443",
+      "162.159.198.20:443",
+      "162.159.198.5:443"
+    ],
+    "sni": "consumer-masque-proxy.cloudflareclient.com",
+    "mode": "auto",
+    "port": 443,
+    "use_ipv6": false,
+    "keepalive": "30s",
+    "dns": [
+      "9.9.9.9",
+      "149.112.112.112",
+      "2620:fe::fe",
+      "2620:fe::9"
+    ],
+    "dns_timeout": "5s",
+    "mtu": 1280,
+    "reconnect_delay": "1s",
+    "connect_timeout": "15s",
+    "quic_failure_threshold": 3,
+    "h2_retry_interval": "5m",
+    "initial_packet_size": 0,
+    "insecure": false
+  }
+}
