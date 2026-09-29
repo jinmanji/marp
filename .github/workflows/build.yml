@@ -6,6 +6,16 @@ name: build
 # 因此普通提交不会触发任何构建，避免浪费 Actions 配额。
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "产物版本号（留空则使用提交 SHA）"
+        required: false
+        default: ""
+      draft_release:
+        description: "编译完成后创建 Draft Release 并上传产物"
+        type: boolean
+        required: false
+        default: false
   release:
     types: [published]
 
@@ -198,7 +208,7 @@ jobs:
           TAG: ${{ inputs.version != '' && inputs.version || format('build-{0}', github.run_id) }}
         run: |
           cd dist
-          # 注意：这里必须用 ${{ }} 表达式，$(github.sha) 会被 bash 当成命令替换而执行失败。
+          # 注意：这里必须用 GitHub 表达式语法，$(github.sha) 会被 bash 当成命令替换而执行失败。
           gh release create "$TAG" \
             --draft \
             --title "$TAG (${{ github.sha }})" \
