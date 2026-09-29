@@ -183,9 +183,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
         run: |
           cd dist
-          gh release upload "$TAG" ./* --clobber
+          # 必须带 --repo：本 job 只下载了 artifact，没有 checkout，
+          # 工作目录下不存在 .git。不指定仓库时 gh 会去调用 git 解析远端并报
+          # "fatal: not a git repository"。
+          gh release upload "$TAG" ./* --repo "$REPO" --clobber
+          gh release view "$TAG" --repo "$REPO" --json tagName,assets --jq '.tagName, (.assets | length)'
 
   # 手动触发时可选：顺便开一个 Draft Release 方便下载。
   draft-release:
@@ -206,10 +211,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.version != '' && inputs.version || format('build-{0}', github.run_id) }}
+          REPO: ${{ github.repository }}
         run: |
           cd dist
-          # 注意：这里必须用 GitHub 表达式语法，$(github.sha) 会被 bash 当成命令替换而执行失败。
+          # 同样需要 --repo，理由同上：工作目录里没有 .git。
+          # 标题里的提交哈希要用 GitHub 表达式语法，否则会被 bash 当成命令替换而执行失败。
           gh release create "$TAG" \
+            --repo "$REPO" \
             --draft \
             --title "$TAG (${{ github.sha }})" \
             --generate-notes \
