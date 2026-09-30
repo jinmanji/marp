@@ -1,7 +1,7 @@
 BINARY := marp
 GOFLAGS_BUILD := -ldflags="-s -w"
 
-.PHONY: all build test vet fmt tidy clean run
+.PHONY: all build test vet fmt tidy clean run docker alpine-image
 
 all: fmt vet test build
 
@@ -25,3 +25,9 @@ clean:
 
 run: build
 	./$(BINARY)
+
+VERSION ?= dev
+
+# 构建 Alpine 镜像（Alpine/musl）
+docker alpine-image:
+	docker build -f Dockerfile.alpine -t $(BINARY):alpine --build-arg VERSION=$(VERSION) .

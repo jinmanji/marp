@@ -262,6 +262,34 @@ curl -fsSL "https://github.com/jinmanji/marp/releases/latest/download/marp-linux
 marp &            # 默认 HTTP :8000 / SOCKS5 :1080，配置写入 ./config.json
 ```
 
+### Alpine Linux
+
+所有 Linux 产物均以 `CGO_ENABLED=0` 编译，是**完全静态、不含动态链接器**的 ELF，
+所以**同一份 `marp-linux-*` 产物在 Alpine（musl）和 glibc 发行版上都能跑**，
+不需要单独的 musl 构建。
+
+原生安装（Alpine 默认没有 `sudo`，用 `doas` 或直接 root）：
+
+```bash
+apk add --no-cache curl
+curl -fsSL "https://github.com/jinmanji/marp/releases/latest/download/marp-linux-$(uname -m|sed 's/x86_64/amd64/;s/aarch64\|arm64/arm64/;s/armv8l/armv7/;s/armv7l/armv7/;s/armv6l/armv6/')" -o /tmp/marp && doas install -m755 /tmp/marp /usr/local/bin/marp && marp version
+```
+
+Docker：
+
+```bash
+make alpine-image                      # 或 docker build -f Dockerfile.alpine -t marp:alpine .
+docker run -d --name marp -p 8000:8000 -p 1080:1080 -v marp-data:/etc/marp marp:alpine
+```
+
+镜像基于 `alpine:3.20`，以非 root 用户 `marp` 运行，`config.json` 与 `warp.json` 放在
+`/etc/marp` 卷里持久化。注意 Alpine 基础镜像默认**不带 CA 根证书**，镜像里已装
+`ca-certificates`，否则无法与 Cloudflare 建立 TLS。
+
+CI 会把真实产物丢进 `node:20-alpine` 容器里跑一遍（`verify-alpine` job），
+并检查所有 linux 产物没有 `PT_INTERP`——因此“能在 Alpine 上跑”不是口头承诺，
+而是每次发布都会被验证的事实。
+
 编译矩阵（均为 `CGO_ENABLED=0` + `-trimpath`，产物可复现）：
 
 | 系统 | 架构 | 产物名 |
@@ -283,6 +311,7 @@ marp &            # 默认 HTTP :8000 / SOCKS5 :1080，配置写入 ./config.jso
 
 ```
 main.go                      CLI、隧道装配、代理服务装配
+Dockerfile.alpine            Alpine/musl 镜像定义
 internal/appconfig/          配置加载 / 默认值 / 随机凭据 / 持久化
 internal/warpapi/            wgcf 风格注册、配置提取、账号文件读写
 internal/tunnel/             端点解析 + QUIC/HTTP2 回退的隧道守护

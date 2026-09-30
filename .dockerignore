@@ -1,0 +1,19 @@
+# 构建产物与运行时状态，不要进入 Docker 构建上下文
+marp
+marp.exe
+dist/
+
+# 含代理密码与 WARP 私钥，绝不能进镜像
+config.json
+warp.json
+*.tmp
+
+# 版本控制与 CI
+.git/
+.github/
+
+# 文档与构建脚本
+README.md
+Makefile
+config.example.json
+Dockerfile.alpine

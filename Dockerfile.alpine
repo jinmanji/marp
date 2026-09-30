@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+
+# Alpine（musl）镜像构建。
+#
+# 由于所有产物都以 CGO_ENABLED=0 编译，产出的是完全静态、不依赖动态链接器的
+# ELF，因此既能在 Alpine 上运行，也能在 glibc 发行版上运行。
+#
+# 构建：
+#   docker build -f Dockerfile.alpine -t marp:alpine --build-arg VERSION=v0.0.3 .
+# 运行（首次启动会自动注册 WARP 账号并生成随机用户名密码，日志里会打印）：
+#   docker run -d --name marp -p 8000:8000 -p 1080:1080 \
+#     -v marp-data:/etc/marp marp:alpine
+
+# ---------- 构建阶段 ----------
+FROM golang:1.27-alpine AS builder
+
+WORKDIR /src
+
+# go mod download 需要 git 和证书。
+RUN apk add --no-cache git ca-certificates
+
+# 先只复制依赖清单，充分利用 Docker 层缓存。
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build \
+      -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION}" \
+      -o /out/marp .
+
+# 校验产物确实是完全静态的（没有 PT_INTERP），否则 Alpine 上跑不起来。
+RUN if readelf -l /out/marp | grep -q INTERP; then \
+      echo '产物不是静态链接，无法在 musl 上运行' && exit 1; \
+    fi
+
+# ---------- 运行阶段 ----------
+FROM alpine:3.20
+
+# ca-certificates: 连接 Cloudflare 需要校验 TLS 根证书，Alpine 默认不带。
+# tzdata: 让容器内的时间处理与时区配置正确。
+RUN apk add --no-cache ca-certificates tzdata && \
+    addgroup -S marp && adduser -S -G marp -h /etc/marp marp
+
+COPY --from=builder /out/marp /usr/local/bin/marp
+
+# config.json 与 warp.json（含私钥）都放在这里，用卷持久化。
+RUN mkdir -p /etc/marp && chown -R marp:marp /etc/marp
+VOLUME ["/etc/marp"]
+
+USER marp
+WORKDIR /etc/marp
+
+ENTRYPOINT ["/usr/local/bin/marp"]
+CMD ["run"]

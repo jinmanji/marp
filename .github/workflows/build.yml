@@ -132,6 +132,18 @@ jobs:
           fi
           echo "格式校验通过: $expected"
 
+          # Alpine / musl 兼容的前提：产物必须完全静态，不带动态链接器。
+          # 一旦将来有人在构建时打开了 cgo，这里会拦住。
+          case "${{ matrix.goos }}" in
+            linux|android)
+              if readelf -l "$file" | grep -q INTERP; then
+                echo "产物包含 PT_INTERP（动态链接），无法在 Alpine/musl 上运行"
+                exit 1
+              fi
+              echo "静态链接检查通过（Alpine/musl 可运行）"
+              ;;
+          esac
+
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
@@ -142,6 +154,38 @@ jobs:
           path: dist/${{ matrix.artifact }}
           if-no-files-found: error
           retention-days: 30
+
+  # 实际在 Alpine 里跑一下发布用的二进制。
+  # 用 node:20-alpine 而不是 alpine：actions/download-artifact 是 JavaScript
+  # action，需要容器里自带 musl 版 Node 才能执行。
+  verify-alpine:
+    name: 在 Alpine 上运行
+    needs: build
+    runs-on: ubuntu-latest
+    container: node:20-alpine
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: marp-linux-amd64
+          path: dist
+
+      - name: 在 musl 环境运行
+        run: |
+          set -eu
+          echo "发行版: $(cat /etc/os-release | grep PRETTY_NAME)"
+          chmod +x dist/marp-linux-amd64
+          ./dist/marp-linux-amd64 version
+          ./dist/marp-linux-amd64 --help >/dev/null
+          echo "Alpine 运行验证通过"
+
+      - name: 确认产物是静态链接
+        run: |
+          apk add --no-cache binutils >/dev/null
+          if readelf -l dist/marp-linux-amd64 | grep -q INTERP; then
+            echo "产物带 PT_INTERP，不是静态链接"
+            exit 1
+          fi
+          echo "确认无 PT_INTERP"
 
   checksums:
     name: checksums
@@ -188,7 +232,7 @@ jobs:
   # 发布 Release 时：把产物与校验和直接挂到该 Release 上。
   attach-to-release:
     name: 上传到 Release
-    needs: [build, checksums]
+    needs: [build, checksums, verify-alpine]
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     permissions:
@@ -219,7 +263,7 @@ jobs:
   # 手动触发时可选：顺便开一个 Draft Release 方便下载。
   draft-release:
     name: 创建 Draft Release
-    needs: [build, checksums]
+    needs: [build, checksums, verify-alpine]
     if: github.event_name == 'workflow_dispatch' && inputs.draft_release
     runs-on: ubuntu-latest
     permissions:
