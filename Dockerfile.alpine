@@ -50,6 +50,9 @@ COPY --from=builder /out/marp /usr/local/bin/marp
 RUN mkdir -p /etc/marp && chown -R marp:marp /etc/marp
 VOLUME ["/etc/marp"]
 
+# 容器里没有 $HOME，默认的 ~/.marp/ 无法解析；用 MARP_CONFIG 直接指向卷。
+ENV MARP_CONFIG=/etc/marp/config.json
+
 USER marp
 WORKDIR /etc/marp
 

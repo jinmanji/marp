@@ -74,9 +74,7 @@ func printUsage() {
 
 	runFlags := flag.NewFlagSet("run", flag.ContinueOnError)
 	addConfigFlag(runFlags, &cfgPath)
-	runFlags.StringVar(&endpoints, "endpoints", "", "覆盖端点池，逗号分隔的 ip:port，例如 162.159.198.218:443,162.159.198.20:443")
-	runFlags.StringVar(&sni, "sni", "", "覆盖 TLS SNI，可伪装为其他域名，例如 recaptcha.net")
-	runFlags.StringVar(&mode, "mode", "", "传输模式: auto (默认, QUIC 优先 + HTTP/2 回退) / quic / http2")
+	addOverrideFlags(runFlags, &endpoints, &sni, &mode)
 	runFlags.BoolVar(&forceNew, "register", false, "账号配置缺失时强制重新注册")
 	runFlags.StringVar(&license, "license", "", "注册后绑定的 WARP+ 许可证（可选）")
 	runFlags.BoolVar(&showCreds, "creds", false, "启动时打印代理凭据")
@@ -94,6 +92,7 @@ func printUsage() {
 
 	credsFlags := flag.NewFlagSet("creds", flag.ContinueOnError)
 	addConfigFlag(credsFlags, &cfgPath)
+	addOverrideFlags(credsFlags, &endpoints, &sni, &mode)
 	credsFlags.SetOutput(os.Stdout)
 	fmt.Println("\ncreds 选项:")
 	credsFlags.PrintDefaults()
@@ -121,27 +120,58 @@ func run(args []string, logger *log.Logger) error {
 	return runProxy(args, logger)
 }
 
-// addConfigFlag registers the configuration file flag on a flag set.
+// addOverrideFlags registers the transport override flags shared by run and
+// creds. creds accepts them too so the effective SNI/endpoint pool can be
+// previewed without starting the proxy.
+func addOverrideFlags(flags *flag.FlagSet, endpoints, sni, mode *string) {
+	flags.StringVar(endpoints, "endpoints", "", "覆盖端点池，逗号分隔的 ip:port，例如 162.159.198.218:443,162.159.198.20:443")
+	flags.StringVar(sni, "sni", "", "覆盖 TLS SNI，可伪装为其他域名，例如 recaptcha.net")
+	flags.StringVar(mode, "mode", "", "传输模式: auto (默认, QUIC 优先 + HTTP/2 回退) / quic / http2")
+}
+
+// addConfigFlag registers the configuration file flag on a flag set. The
+// default is $MARP_CONFIG, then ~/.marp/config.json.
 func addConfigFlag(flags *flag.FlagSet, cfgPath *string) {
-	flags.StringVar(cfgPath, "c", "config.json", "应用配置文件路径")
-	flags.StringVar(cfgPath, "config", "config.json", "应用配置文件路径")
+	def, _ := appconfig.DefaultPath()
+	flags.StringVar(cfgPath, "c", def, "应用配置文件路径（默认 ~/.marp/config.json）")
+	flags.StringVar(cfgPath, "config", def, "应用配置文件路径（默认 ~/.marp/config.json）")
 }
 
 // loadConfig loads the configuration, creating it with random credentials when
-// it does not exist yet.
-func loadConfig(path string, logger *log.Logger) (appconfig.Config, error) {
-	cfg, created, err := appconfig.Load(path)
+// it does not exist yet. ov carries command line overrides: they are written
+// into a freshly created file and applied in memory to an existing one.
+func loadConfig(path string, ov appconfig.Overrides, logger *log.Logger) (appconfig.Config, error) {
+	// A leftover config.json in the working directory means the user is
+	// coming from an older version that stored the config next to the binary.
+	if def, _ := appconfig.DefaultPath(); path == def && !fileExists(path) {
+		if local := "config.json"; fileExists(local) {
+			logger.Printf("提示: 当前目录下发现旧版配置 %s，将改用 %s。", local, path)
+			logger.Printf("如需继续使用旧配置，请加 -c ./%s", local)
+		}
+	}
+
+	cfg, created, err := appconfig.Load(path, ov)
 	if err != nil {
 		return cfg, err
 	}
 	if created {
 		logger.Printf("未找到配置文件，已生成 %s", path)
+		if !ov.IsZero() {
+			logger.Printf("已按命令行参数写入: SNI=%s", cfg.Tunnel.SNI)
+		}
 		if cfg.Auth.Required() {
 			logger.Printf("已生成随机代理凭据: 用户名 %q 密码 %q", cfg.Auth.Username, cfg.Auth.Password)
 			logger.Printf("客户端需要使用这组凭据，请妥善保存")
 		}
+	} else if !ov.IsZero() {
+		logger.Printf("已用命令行参数覆盖配置（文件本身未被修改）: SNI=%s", cfg.Tunnel.SNI)
 	}
 	return cfg, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func runProxy(args []string, logger *log.Logger) error {
@@ -156,9 +186,7 @@ func runProxy(args []string, logger *log.Logger) error {
 		showCreds bool
 	)
 	addConfigFlag(flags, &cfgPath)
-	flags.StringVar(&endpoints, "endpoints", "", "覆盖端点池，逗号分隔的 ip:port，例如 162.159.198.218:443,162.159.198.20:443")
-	flags.StringVar(&sni, "sni", "", "覆盖 TLS SNI，可伪装为其他域名，例如 recaptcha.net")
-	flags.StringVar(&mode, "mode", "", "传输模式: auto (默认) / quic / http2")
+	addOverrideFlags(flags, &endpoints, &sni, &mode)
 	flags.BoolVar(&forceNew, "register", false, "账号配置缺失时强制重新注册")
 	flags.StringVar(&license, "license", "", "注册后绑定的 WARP+ 许可证（可选）")
 	flags.BoolVar(&showCreds, "creds", false, "启动时打印代理凭据")
@@ -166,11 +194,10 @@ func runProxy(args []string, logger *log.Logger) error {
 		return err
 	}
 
-	cfg, err := loadConfig(cfgPath, logger)
+	cfg, err := loadConfig(cfgPath, overridesFrom(endpoints, sni, mode), logger)
 	if err != nil {
 		return err
 	}
-	applyOverrides(&cfg, endpoints, sni, mode)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -256,15 +283,12 @@ func tunDev(dev api.TunnelDevice) error {
 	return nil
 }
 
-func applyOverrides(cfg *appconfig.Config, endpoints, sni, mode string) {
-	if v := splitList(endpoints); len(v) > 0 {
-		cfg.Tunnel.Endpoints = v
-	}
-	if strings.TrimSpace(sni) != "" {
-		cfg.Tunnel.SNI = strings.TrimSpace(sni)
-	}
-	if strings.TrimSpace(mode) != "" {
-		cfg.Tunnel.Mode = strings.ToLower(strings.TrimSpace(mode))
+// overridesFrom turns the command line values into appconfig.Overrides.
+func overridesFrom(endpoints, sni, mode string) appconfig.Overrides {
+	return appconfig.Overrides{
+		Endpoints: splitList(endpoints),
+		SNI:       strings.TrimSpace(sni),
+		Mode:      strings.TrimSpace(mode),
 	}
 }
 
@@ -292,7 +316,7 @@ func runRegister(args []string, logger *log.Logger) error {
 		return err
 	}
 
-	cfg, err := loadConfig(cfgPath, logger)
+	cfg, err := loadConfig(cfgPath, appconfig.Overrides{}, logger)
 	if err != nil {
 		return err
 	}
@@ -315,12 +339,18 @@ func runRegister(args []string, logger *log.Logger) error {
 
 func runCreds(args []string, logger *log.Logger) error {
 	flags := flag.NewFlagSet("creds", flag.ContinueOnError)
-	var cfgPath string
+	var (
+		cfgPath   string
+		endpoints string
+		sni       string
+		mode      string
+	)
 	addConfigFlag(flags, &cfgPath)
+	addOverrideFlags(flags, &endpoints, &sni, &mode)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := loadConfig(cfgPath, logger)
+	cfg, err := loadConfig(cfgPath, overridesFrom(endpoints, sni, mode), logger)
 	if err != nil {
 		return err
 	}
@@ -328,11 +358,11 @@ func runCreds(args []string, logger *log.Logger) error {
 	if err := usqueconfig.LoadConfig(cfg.AccountPath(cfgPath)); err != nil {
 		logger.Printf("提示: 尚未注册 WARP 账号，仅显示监听信息")
 	}
-	endpoints, err := buildEndpoints(cfg)
+	pool, err := buildEndpoints(cfg)
 	if err != nil {
-		endpoints = nil
+		pool = nil
 	}
-	printCreds(cfg, cfgPath, endpoints, logger)
+	printCreds(cfg, cfgPath, pool, logger)
 	return nil
 }
 

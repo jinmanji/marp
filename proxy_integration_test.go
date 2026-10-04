@@ -286,7 +286,7 @@ func TestBindProxiesRequiresDialer(t *testing.T) {
 func TestLoadConfigGeneratesRandomCredentials(t *testing.T) {
 	path := t.TempDir() + "/config.json"
 
-	cfg, created, err := appconfig.Load(path)
+	cfg, created, err := appconfig.Load(path, appconfig.Overrides{})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

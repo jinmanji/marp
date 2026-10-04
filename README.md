@@ -64,12 +64,19 @@ marp version            打印版本号
 
 | 选项 | 说明 |
 | --- | --- |
-| `-c, -config` | 应用配置文件路径（默认 `config.json`） |
+| `-c, -config` | 配置文件路径（默认 `~/.marp/config.json`） |
 | `-endpoints` | 覆盖端点池，逗号分隔的 `ip:port` |
 | `-sni` | 覆盖 TLS SNI，可伪装为其他域名 |
 | `-mode` | `auto`（默认）/ `quic` / `http2` |
 | `-register` | 账号配置缺失时强制重新注册 |
 | `-license` | 注册后绑定 WARP+ 许可证 |
+
+首次运行直接带上 SNI 即可，无需手写配置文件：
+
+```bash
+marp -sni recaptcha.net
+# -> 生成 ~/.marp/config.json，其中 tunnel.sni = "recaptcha.net"
+```
 
 ### 示例：指定端点 + SNI 伪装
 
@@ -122,6 +129,40 @@ UDP/443 被封锁时可用 `-mode http2` 强制走 TCP。
 ---
 
 ## 配置文件
+
+### 位置
+
+默认路径 **`~/.marp/config.json`**（WARP 账号文件随之放在 `~/.marp/warp.json`）。
+目录不存在会自动创建（`0700`），文件权限 `0600`。
+
+优先级：
+
+| 方式 | 说明 |
+| --- | --- |
+| `-c /path/to/config.json` | 命令行指定（`-config` 同义） |
+| `$MARP_CONFIG` | 环境变量指定 |
+| `~/.marp/config.json` | 默认 |
+
+> 取不到用户主目录时（`$HOME` 未设置，极简容器里很常见）会退回当前目录的
+> `./config.json` 并打印警告，而不是直接报错退出。
+
+**升级提示**：旧版本把配置写在**运行目录**下。升级后如果当前目录存在
+`config.json` 而默认路径不存在，程序会打印提示但**不会自动搬运**你的文件
+（避免误改）——请自行执行 `mv config.json warp.json ~/.marp/`，或继续用
+`-c ./config.json`。
+
+### 命令行覆盖语义
+
+`-sni` / `-mode` / `-endpoints` 的优先级高于配置文件：
+
+- **配置文件不存在** → 用命令行参数创建配置，指定的 SNI 会**写进文件**里
+  （例如 `marp -sni recaptcha.net` 之后 `~/.marp/config.json` 里就是 `recaptcha.net`）；
+- **配置文件已存在** → 命令行参数在**运行时生效**，但**不会改写磁盘上的文件**，
+  你下次不带参数启动仍然用文件里的值。
+
+`marp creds` 同样接受这三个参数，可以在不启动代理的情况下预览生效结果。
+
+### 文件格式
 
 首次运行自动生成 `config.json`（权限 `0600`），随后可以手工编辑。
 
@@ -259,7 +300,15 @@ curl -fsSL "https://github.com/jinmanji/marp/releases/latest/download/marp-linux
 启动（后台常驻，首次运行会自动注册 WARP 账号并生成随机用户名密码）：
 
 ```bash
-marp &            # 默认 HTTP :8000 / SOCKS5 :1080，配置写入 ./config.json
+marp              # 默认 HTTP :8000 / SOCKS5 :1080，配置写入 ~/.marp/
+marp &            # 后台运行
+```
+
+配置文件固定在 `~/.marp/`，不再随启动目录变化，所以 systemd 里不必再指定 `-c`：
+
+```ini
+[Service]
+ExecStart=/usr/local/bin/marp -sni recaptcha.net
 ```
 
 ### Alpine Linux

@@ -32,7 +32,68 @@ const (
 	defaultAccountFile = "warp.json"
 	defaultSNI         = "consumer-masque-proxy.cloudflareclient.com"
 	defaultMode        = "auto"
+
+	// DefaultDirName is the per-user directory holding the configuration and
+	// the WARP account, i.e. ~/.marp/.
+	DefaultDirName = ".marp"
+	// defaultConfigName is the file name inside DefaultDirName.
+	defaultConfigName = "config.json"
+	// EnvConfigPath overrides the default configuration path.
+	EnvConfigPath = "MARP_CONFIG"
 )
+
+// Overrides carries command line values that take precedence over the
+// configuration file.
+//
+// Semantics required by the CLI:
+//   - the file does not exist: the overrides are baked into the generated file,
+//     so a fresh installation records the SNI the user asked for;
+//   - the file exists: the overrides win at runtime but the file on disk is
+//     left untouched, so adding -sni never silently rewrites the config.
+type Overrides struct {
+	Endpoints []string
+	SNI       string
+	Mode      string
+}
+
+// IsZero reports whether no override was requested.
+func (o Overrides) IsZero() bool {
+	return len(o.Endpoints) == 0 &&
+		strings.TrimSpace(o.SNI) == "" &&
+		strings.TrimSpace(o.Mode) == ""
+}
+
+// apply copies the non-empty overrides onto cfg.
+func (o Overrides) apply(cfg *Config) {
+	if len(o.Endpoints) > 0 {
+		cfg.Tunnel.Endpoints = o.Endpoints
+	}
+	if v := strings.TrimSpace(o.SNI); v != "" {
+		cfg.Tunnel.SNI = v
+	}
+	if v := strings.TrimSpace(o.Mode); v != "" {
+		cfg.Tunnel.Mode = strings.ToLower(v)
+	}
+}
+
+// DefaultPath returns the default configuration file path and a non-empty
+// warning when a fallback had to be used.
+//
+// Resolution order: $MARP_CONFIG, then ~/.marp/config.json. os.UserHomeDir
+// fails when $HOME is unset, which is common in minimal containers, so that
+// case falls back to ./config.json instead of aborting.
+func DefaultPath() (path string, warning string) {
+	if v := strings.TrimSpace(os.Getenv(EnvConfigPath)); v != "" {
+		return v, ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return defaultConfigName,
+			"无法确定用户主目录（$HOME 未设置），配置将写在当前目录；" +
+				"建议用 -c 指定固定路径，或设置 " + EnvConfigPath
+	}
+	return filepath.Join(home, DefaultDirName, defaultConfigName), ""
+}
 
 // Auth holds the proxy credentials presented by both the HTTP and the SOCKS5
 // listeners.
@@ -153,7 +214,11 @@ func Default() Config {
 // default configuration with freshly generated random credentials is returned
 // and persisted. The second return value reports whether the file was created
 // by this call.
-func Load(path string) (cfg Config, created bool, err error) {
+//
+// ov carries command line overrides. When the file is created the overrides
+// are written into it; when the file already exists they only affect the
+// returned value, leaving the file untouched. See Overrides.
+func Load(path string, ov Overrides) (cfg Config, created bool, err error) {
 	data, err := os.ReadFile(path)
 	switch {
 	case err == nil:
@@ -167,6 +232,8 @@ func Load(path string) (cfg Config, created bool, err error) {
 				return cfg, false, err
 			}
 		}
+		// Overrides win at runtime but are deliberately not persisted.
+		ov.apply(&cfg)
 		return cfg, false, nil
 	case errors.Is(err, fs.ErrNotExist):
 		// First run: build a complete configuration from scratch.
@@ -175,6 +242,9 @@ func Load(path string) (cfg Config, created bool, err error) {
 	}
 
 	cfg = Default()
+	// Bake the requested overrides into the file we are about to create.
+	ov.apply(&cfg)
+
 	username, err := randomString(10, lowerLetters)
 	if err != nil {
 		return cfg, false, err
