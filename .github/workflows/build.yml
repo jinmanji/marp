@@ -268,14 +268,26 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 分两步下载。用多行 pattern（marp-* \n checksums）实测匹配不到任何
+      # artifact，而且步骤仍报成功，dist 目录不会被创建。
       - uses: actions/download-artifact@v4
         with:
-          # 同时取二进制与 checksums artifact，后者不在 marp-* 范围内。
-          pattern: |
-            marp-*
-            checksums
+          pattern: marp-*
           merge-multiple: true
           path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: dist
+
+      - name: 确认产物已下载
+        run: |
+          if [ ! -d dist ]; then
+            echo "dist 目录不存在，artifact 没有被下载"
+            exit 1
+          fi
+          echo "已下载 $(ls dist | wc -l) 个文件"
 
       - name: 上传产物到 ${{ github.event.release.tag_name }}
         env:
@@ -301,11 +313,22 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: |
-            marp-*
-            checksums
+          pattern: marp-*
           merge-multiple: true
           path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: dist
+
+      - name: 确认产物已下载
+        run: |
+          if [ ! -d dist ]; then
+            echo "dist 目录不存在，artifact 没有被下载"
+            exit 1
+          fi
+          echo "已下载 $(ls dist | wc -l) 个文件"
 
       - name: 创建 Draft Release
         env:
