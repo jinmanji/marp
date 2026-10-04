@@ -334,6 +334,65 @@ make alpine-image                      # 或 docker build -f Dockerfile.alpine -
 docker run -d --name marp -p 8000:8000 -p 1080:1080 -v marp-data:/etc/marp marp:alpine
 ```
 
+### Docker Compose
+
+```bash
+# 一条命令搞定（首次会构建镜像并自动注册 WARP 账号）
+docker compose up -d --build
+
+# 看日志（首次启动会打印随机生成的代理凭据）
+docker compose logs -f
+
+# 随时查看当前的代理地址 / 凭据 / SNI
+docker compose exec marp marp creds
+```
+
+验证：
+
+```bash
+curl -x http://<用户名>:<密码>@127.0.0.1:8000 https://www.cloudflare.com/cdn-cgi/trace   # 期望 warp=on
+curl -x socks5h://<用户名>:<密码>@127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace
+```
+
+停用与彻底清理：
+
+```bash
+docker compose down            # 保留数据卷
+docker compose down --volumes # 连同 config.json / warp.json 一起删除
+```
+
+**想跳过镜像内的 Go 编译**（快很多，几秒 vs 几分钟）——先下载 release 二进制，
+再把 `docker-compose.yml` 里的 `build.dockerfile` 改成 `Dockerfile.release`：
+
+```bash
+curl -fsSL "https://github.com/jinmanji/marp/releases/latest/download/marp-linux-$(uname -m|sed 's/x86_64/amd64/;s/aarch64\|arm64/arm64/;s/armv8l/armv7/;s/armv7l/armv7/;s/armv6l/armv6/')" -o marp
+sed -i 's/Dockerfile.alpine/Dockerfile.release/' docker-compose.yml
+docker compose up -d --build
+```
+
+可调参数（复制 `.env.example` 为 `.env` 后修改）：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `MARP_HTTP_BIND` | `127.0.0.1` | HTTP 代理在**宿主机**上的绑定地址，要对外访问改成 `0.0.0.0` |
+| `MARP_SOCKS_BIND` | `127.0.0.1` | SOCKS5 同上 |
+| `MARP_VERSION` | `dev` | 注入二进制的版本号（仅源码构建） |
+| `TZ` | `UTC` | 容器时区 |
+
+编排文件里已做的安全处理：以非 root 用户运行、`cap_drop: ALL`、
+`no-new-privileges`、日志轮转（10MB × 3）。
+
+> **为什么镜像里预置了 `docker/config.template.json`**：程序原生默认监听
+> `127.0.0.1`，而 Docker 的 `-p` 端口映射是转发到**容器网卡**的，
+> 如果容器内绑回环，映射出来的端口根本连不上。模板监听 `0.0.0.0`，
+> 并放在 `VOLUME` 指令**之前**——Docker 首次创建命名卷时会把镜像里该目录的
+> 内容复制进卷，于是新卷一开局就是可用的。用户名密码在模板里留空，
+> 程序首次启动会用 `crypto/rand` 生成随机凭据并写回卷内的 `config.json`。
+
+> **为什么没有 healthcheck**：隧道断线时程序自己会重连（QUIC 连续失败还会
+> 自动回退 HTTP/2）。若健康检查因此判定不健康并重启容器，反而会打断这套
+> 自愈逻辑。容器级存活由 `restart: unless-stopped` 负责。
+
 镜像基于 `alpine:3.20`，以非 root 用户 `marp` 运行，`config.json` 与 `warp.json` 放在
 `/etc/marp` 卷里持久化。注意 Alpine 基础镜像默认**不带 CA 根证书**，镜像里已装
 `ca-certificates`，否则无法与 Cloudflare 建立 TLS。
@@ -363,7 +422,10 @@ CI 会把真实产物丢进 `node:20-alpine` 容器里跑一遍（`verify-alpine
 
 ```
 main.go                      CLI、隧道装配、代理服务装配
-Dockerfile.alpine            Alpine/musl 镜像定义
+Dockerfile.alpine            从源码构建的 Alpine/musl 镜像
+Dockerfile.release           基于 release 二进制的快速镜像
+docker-compose.yml           编排文件
+docker/config.template.json  容器内配置模板（监听 0.0.0.0）
 internal/appconfig/          配置加载 / 默认值 / 随机凭据 / 持久化
 internal/warpapi/            wgcf 风格注册、配置提取、账号文件读写
 internal/tunnel/             端点解析 + QUIC/HTTP2 回退的隧道守护

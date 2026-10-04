@@ -1,0 +1,61 @@
+# marp - Cloudflare WARP MASQUE 隧道，暴露为带认证的 HTTP / SOCKS5 代理
+#
+# 快速开始：
+#   docker compose up -d --build
+#   docker compose logs -f
+#   docker compose exec marp marp creds      # 查看随机生成的代理凭据
+#
+# 想省掉镜像内的 Go 编译（快很多），先下载 release 二进制再构建：
+#   curl -fsSL "https://github.com/jinmanji/marp/releases/latest/download/marp-linux-$(uname -m|sed 's/x86_64/amd64/;s/aarch64\|arm64/arm64/;s/armv8l/armv7/;s/armv7l/armv7/;s/armv6l/armv6/')" -o marp
+#   # 然后把下面 build.dockerfile 换成 Dockerfile.release
+#
+# 可选：复制 .env.example 为 .env 后按需覆盖变量。
+
+name: marp
+
+services:
+  marp:
+    build:
+      context: .
+      # 默认从源码构建。改成 Dockerfile.release 可直接用 release 二进制。
+      dockerfile: Dockerfile.alpine
+      args:
+        VERSION: ${MARP_VERSION:-dev}
+
+    image: marp:alpine
+    container_name: marp
+    restart: unless-stopped
+
+    # 默认只发布到宿主机回环地址。代理本身有认证，但如需从其他机器访问，
+    # 改成 "0.0.0.0:8000:8000" 或在 .env 里设 MARP_HTTP_BIND=0.0.0.0
+    ports:
+      - "${MARP_HTTP_BIND:-127.0.0.1}:8000:8000"
+      - "${MARP_SOCKS_BIND:-127.0.0.1}:1080:1080"
+
+    # 命名卷保存 config.json（代理密码）与 warp.json（WARP 私钥）。
+    # 镜像里预置的 config 模板会在卷首次创建时自动复制进去。
+    volumes:
+      - marp-data:/etc/marp
+
+    environment:
+      TZ: ${TZ:-UTC}
+
+    # 程序以非 root 用户运行，且不需要任何 capability（不建 TUN、不用 raw socket）。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # 防止日志把磁盘写满。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # 刻意不设 healthcheck：隧道断线时程序自己会重连（QUIC 失败还会回退
+    # HTTP/2），如果健康检查因此判定不健康并重启容器，反而会打断这套自愈
+    # 逻辑。容器级存活由 restart: unless-stopped 负责。
+
+volumes:
+  marp-data:

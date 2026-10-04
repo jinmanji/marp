@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+
+# 基于已编译好的 release 二进制构建镜像：不拉 Go 工具链、不下载依赖，几秒完成。
+#
+# 用法（Dockerfile.release 期望构建上下文里有 ./marp 这个二进制）：
+#   curl -fsSL "https://github.com/jinmanji/marp/releases/latest/download/marp-linux-$(uname -m|sed 's/x86_64/amd64/;s/aarch64\|arm64/arm64/;s/armv8l/armv7/;s/armv7l/armv7/;s/armv6l/armv6/')" -o marp
+#   docker compose up -d --build
+#
+# 手动构建：
+#   docker build -f Dockerfile.release -t marp:alpine .
+
+FROM alpine:3.20
+
+# ca-certificates: 连接 Cloudflare 需要 TLS 根证书，Alpine 默认不带。
+# tzdata: 让容器内的时间处理与时区配置正确。
+RUN apk add --no-cache ca-certificates tzdata && \
+    addgroup -S marp && adduser -S -G marp -h /etc/marp marp
+
+COPY marp /usr/local/bin/marp
+RUN chmod 0755 /usr/local/bin/marp && /usr/local/bin/marp version
+
+# 必须是完全静态链接（无 PT_INTERP），否则在 musl 上跑不起来。
+RUN if readelf -l /usr/local/bin/marp | grep -q INTERP; then \
+      echo '产物不是静态链接，无法在 musl 上运行' && exit 1; \
+    fi
+
+RUN mkdir -p /etc/marp && chown -R marp:marp /etc/marp
+
+# 同 Dockerfile.alpine：容器内必须监听 0.0.0.0；模板要放在 VOLUME 之前，
+# 这样 docker 首次创建命名卷时会把它复制进卷。
+COPY docker/config.template.json /etc/marp/config.json
+VOLUME ["/etc/marp"]
+
+ENV MARP_CONFIG=/etc/marp/config.json
+
+USER marp
+WORKDIR /etc/marp
+
+EXPOSE 8000 1080
+
+ENTRYPOINT ["/usr/local/bin/marp"]
+CMD ["run"]

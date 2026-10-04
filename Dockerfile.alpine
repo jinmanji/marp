@@ -10,6 +10,9 @@
 # 运行（首次启动会自动注册 WARP 账号并生成随机用户名密码，日志里会打印）：
 #   docker run -d --name marp -p 8000:8000 -p 1080:1080 \
 #     -v marp-data:/etc/marp marp:alpine
+#
+# 或者直接用 docker compose：
+#   docker compose up -d --build
 
 # ---------- 构建阶段 ----------
 FROM golang:1.27-alpine AS builder
@@ -48,6 +51,15 @@ COPY --from=builder /out/marp /usr/local/bin/marp
 
 # config.json 与 warp.json（含私钥）都放在这里，用卷持久化。
 RUN mkdir -p /etc/marp && chown -R marp:marp /etc/marp
+
+# 预置配置模板。必须放在 VOLUME 之前：docker 首次创建命名卷时会把镜像里
+# 该目录的内容复制进卷，这样新卷一开局就有可用配置。
+#
+# 关键点：容器内必须监听 0.0.0.0。程序原生默认绑 127.0.0.1，而 docker 的
+# -p 端口映射是转发到容器网卡的，绑回环会让映射出来的端口连不上。
+# 用户名密码留空，程序首次启动会用 crypto/rand 生成随机凭据并写回该文件。
+COPY docker/config.template.json /etc/marp/config.json
+
 VOLUME ["/etc/marp"]
 
 # 容器里没有 $HOME，默认的 ~/.marp/ 无法解析；用 MARP_CONFIG 直接指向卷。
@@ -55,6 +67,8 @@ ENV MARP_CONFIG=/etc/marp/config.json
 
 USER marp
 WORKDIR /etc/marp
+
+EXPOSE 8000 1080
 
 ENTRYPOINT ["/usr/local/bin/marp"]
 CMD ["run"]
