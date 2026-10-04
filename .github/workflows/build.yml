@@ -140,22 +140,32 @@ jobs:
           #        这是预期行为（Android 上该链接器总是存在），所以不能按
           #        静态要求卡它；改为确认解释器确实是 Android 链接器，
           #        而不是意外链到了 glibc。
+          #
+          # 解释器路径从 .interp 段读取（readelf -p .interp），不要去解析
+          # readelf -l 的排版：GNU binutils 与 LLVM 的 readelf 在 INTERP
+          # 段后面插入的行数不同，靠 grep -A 提取会随机失效。
+          # 静态产物没有该段，readelf 只会往 stderr 写提示，因此丢弃 stderr。
+          interp="$(readelf -p .interp "$file" 2>/dev/null | sed -n 's/^\[[^]]*\][[:space:]]*//p' | head -1)"
+
           case "${{ matrix.goos }}" in
             linux)
-              if readelf -l "$file" | grep -q INTERP; then
-                echo "linux 产物包含 PT_INTERP（动态链接），无法在 Alpine/musl 上运行"
+              if readelf -l "$file" 2>/dev/null | grep -q INTERP || [ -n "$interp" ]; then
+                echo "linux 产物带动态链接器（${interp:-PT_INTERP}），无法在 Alpine/musl 上运行"
                 exit 1
               fi
-              echo "静态链接检查通过（Alpine/musl 可运行）"
+              echo "静态链接检查通过（无 PT_INTERP，Alpine/musl 可运行）"
               ;;
             android)
-              interp="$(readelf -l "$file" | grep -A1 INTERP | grep -oE '/[^]]*' | head -1)"
               case "$interp" in
                 /system/bin/linker*)
                   echo "Android PIE，解释器: $interp ✓"
                   ;;
+                '')
+                  echo "Android 产物缺少 .interp 段（应当是 PIE 形态）"
+                  exit 1
+                  ;;
                 *)
-                  echo "Android 产物解释器异常: ${interp:-none}（期望 /system/bin/linker64）"
+                  echo "Android 产物解释器异常: $interp（期望 /system/bin/linker64）"
                   exit 1
                   ;;
               esac
