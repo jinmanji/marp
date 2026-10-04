@@ -313,9 +313,12 @@ ExecStart=/usr/local/bin/marp -sni recaptcha.net
 
 ### Alpine Linux
 
-所有 Linux 产物均以 `CGO_ENABLED=0` 编译，是**完全静态、不含动态链接器**的 ELF，
-所以**同一份 `marp-linux-*` 产物在 Alpine（musl）和 glibc 发行版上都能跑**，
-不需要单独的 musl 构建。
+所有 Linux 产物（`marp-linux-*`）均以 `CGO_ENABLED=0` 编译，是**完全静态、
+不含 PT_INTERP 的 ELF**，所以**同一份产物在 Alpine（musl）和 glibc 发行版上都能跑**，
+不需要单独的 musl 构建。CI 会对每个 linux 产物检查 `PT_INTERP` 来保证这一点。
+
+> `marp-android-arm64` 是例外：Go 为 Android 生成 PIE，解释器为
+> `/system/bin/linker64`，这是 Android 的正常形态，不适用 Alpine 的静态要求。
 
 原生安装（Alpine 默认没有 `sudo`，用 `doas` 或直接 root）：
 
