@@ -214,3 +214,16 @@ func TestCredentialsMatches(t *testing.T) {
 func proxyBasicHeader(user, pass string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass))
 }
+
+// 日志辅助：从 Basic Proxy-Authorization 头里取用户名（仅用于日志）。
+func TestProxyAuthUser(t *testing.T) {
+	h := "Basic " + base64.StdEncoding.EncodeToString([]byte("alice:secret"))
+	if got := proxyAuthUser(h); got != "alice" {
+		t.Fatalf("got %q, want alice", got)
+	}
+	for _, bad := range []string{"", "Bearer abc", "Basic !!!", "basic xyz"} {
+		if got := proxyAuthUser(bad); got != "" {
+			t.Fatalf("header %q: got %q, want empty", bad, got)
+		}
+	}
+}

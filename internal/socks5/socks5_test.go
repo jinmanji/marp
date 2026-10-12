@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -278,5 +279,26 @@ func TestCredentialsRequired(t *testing.T) {
 	}
 	if !(Credentials{Username: "a", Password: "b"}).Required() {
 		t.Fatal("complete credentials must require auth")
+	}
+}
+
+// 认证失败的错误信息必须带上客户端声称的用户名（便于拒绝类问题排查）。
+func TestAuthenticateErrorCarriesUsername(t *testing.T) {
+	s := &Server{Auth: Credentials{Username: "alice", Password: "correct"}}
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	_ = c1.SetDeadline(time.Now().Add(3 * time.Second))
+	_ = c2.SetDeadline(time.Now().Add(3 * time.Second))
+	go func() {
+		// RFC 1929: [ver, ulen, user..., plen, pass...]
+		_, _ = c2.Write([]byte{authVersion, 5, 'a', 'l', 'i', 'c', 'e', 5, 'w', 'r', 'o', 'n', 'g'})
+		// 读掉服务端回的失败字节，避免 net.Pipe 上服务端 Write 阻塞。
+		buf := make([]byte, 2)
+		_, _ = io.ReadFull(c2, buf)
+	}()
+	err := s.authenticate(c1, bufio.NewReader(c1))
+	if err == nil || !strings.Contains(err.Error(), `user="alice"`) {
+		t.Fatalf("err = %v", err)
 	}
 }

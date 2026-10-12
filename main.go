@@ -9,7 +9,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -585,6 +587,7 @@ func printCreds(cfg appconfig.Config, cfgPath string, endpoints []tunnel.Endpoin
 	if cfg.Auth.Required() {
 		logger.Printf("用户名 : %s", cfg.Auth.Username)
 		logger.Printf("密码   : %s", cfg.Auth.Password)
+		logger.Printf("指纹   : %s (sha256(密码) 前 12 位；与配置文件对拍用，避免复制明文出错)", authFingerprint(cfg.Auth.Password))
 		logger.Printf("HTTP   : http://%s:%s@%s", cfg.Auth.Username, cfg.Auth.Password, cfg.Listen.HTTP)
 		logger.Printf("SOCKS5 : socks5://%s:%s@%s", cfg.Auth.Username, cfg.Auth.Password, cfg.Listen.Socks5)
 	} else {
@@ -603,6 +606,16 @@ func printCreds(cfg appconfig.Config, cfgPath string, endpoints []tunnel.Endpoin
 	logger.Printf("模式   : %s", cfg.Tunnel.Mode)
 	logger.Printf("配置   : %s", absolute(cfg.AccountPath(cfgPath)))
 	logger.Printf("----------------------------------------")
+}
+
+// authFingerprint returns the first 12 hex chars of sha256(password) — a
+// stable value for checking "what the process loaded" against the config file
+// without copy/pasting the password itself. A past incident was caused by a
+// hand-typed credential differing from the file value; with this line a
+// mismatch takes one hash comparison to spot.
+func authFingerprint(password string) string {
+	sum := sha256.Sum256([]byte(password))
+	return hex.EncodeToString(sum[:6])
 }
 
 func masqueradeHint(sni string) string {

@@ -280,7 +280,9 @@ func (s *Server) authenticate(conn net.Conn, reader *bufio.Reader) error {
 	okPass := subtle.ConstantTimeCompare(password, []byte(s.Auth.Password)) == 1
 	if !okUser || !okPass {
 		_, _ = conn.Write([]byte{authVersion, authFailure})
-		return errors.New("用户名或密码错误")
+		// 带上客户端声称的用户名（不含密码）：拒绝窗口类问题排查时，
+		// 服务端日志能直接对出「是谁、在什么时候被拒」。
+		return fmt.Errorf("用户名或密码错误 (user=%q)", string(username))
 	}
 	if _, err := conn.Write([]byte{authVersion, authSuccess}); err != nil {
 		return err

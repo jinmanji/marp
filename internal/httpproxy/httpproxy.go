@@ -52,6 +52,21 @@ func (c Credentials) matches(header string) bool {
 	return subtle.ConstantTimeCompare([]byte(header), []byte(expected)) == 1
 }
 
+// proxyAuthUser extracts the username from a Basic Proxy-Authorization header
+// for logging (never the password).
+func proxyAuthUser(header string) string {
+	const prefix = "Basic "
+	if !strings.HasPrefix(header, prefix) {
+		return ""
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(header, prefix))
+	if err != nil {
+		return ""
+	}
+	user, _, _ := strings.Cut(string(raw), ":")
+	return user
+}
+
 // DialFunc establishes an outbound connection through the tunnel. It is an
 // alias so that the SOCKS5 and HTTP servers accept the same dialer.
 type DialFunc = func(ctx context.Context, network, address string) (net.Conn, error)
@@ -147,7 +162,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if !s.Auth.matches(r.Header.Get("Proxy-Authorization")) {
 		w.Header().Set("Proxy-Authenticate", `Basic realm="marp"`)
 		http.Error(w, "需要代理认证", http.StatusProxyAuthRequired)
-		s.logf("http 代理: %s %s 认证失败", r.RemoteAddr, r.URL)
+		s.logf("http 代理: %s %s 认证失败 (user=%q)", r.RemoteAddr, r.URL, proxyAuthUser(r.Header.Get("Proxy-Authorization")))
 		return
 	}
 	if s.Dial == nil {
