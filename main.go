@@ -30,6 +30,7 @@ import (
 
 	"marp/internal/appconfig"
 	"marp/internal/httpproxy"
+	"marp/internal/scan"
 	"marp/internal/socks5"
 	"marp/internal/tunnel"
 	"marp/internal/warpapi"
@@ -68,6 +69,7 @@ func printUsage() {
 	var (
 		cfgPath, endpoints, sni, mode string
 		forceNew, showCreds           bool
+		testEndpoints                 bool
 		license, force                string
 		forceBool                     bool
 	)
@@ -78,6 +80,7 @@ func printUsage() {
 	runFlags.BoolVar(&forceNew, "register", false, "账号配置缺失时强制重新注册")
 	runFlags.StringVar(&license, "license", "", "注册后绑定的 WARP+ 许可证（可选）")
 	runFlags.BoolVar(&showCreds, "creds", false, "启动时打印代理凭据")
+	runFlags.BoolVar(&testEndpoints, "test", false, "启动前扫描并实测最快 endpoint（首次启动会把结果写入配置）")
 	runFlags.SetOutput(os.Stdout)
 	fmt.Println("\nrun 选项:")
 	runFlags.PrintDefaults()
@@ -140,7 +143,7 @@ func addConfigFlag(flags *flag.FlagSet, cfgPath *string) {
 // loadConfig loads the configuration, creating it with random credentials when
 // it does not exist yet. ov carries command line overrides: they are written
 // into a freshly created file and applied in memory to an existing one.
-func loadConfig(path string, ov appconfig.Overrides, logger *log.Logger) (appconfig.Config, error) {
+func loadConfig(path string, ov appconfig.Overrides, logger *log.Logger) (appconfig.Config, bool, error) {
 	// A leftover config.json in the working directory means the user is
 	// coming from an older version that stored the config next to the binary.
 	if def, _ := appconfig.DefaultPath(); path == def && !fileExists(path) {
@@ -152,7 +155,7 @@ func loadConfig(path string, ov appconfig.Overrides, logger *log.Logger) (appcon
 
 	cfg, created, err := appconfig.Load(path, ov)
 	if err != nil {
-		return cfg, err
+		return cfg, false, err
 	}
 	if created {
 		logger.Printf("未找到配置文件，已生成 %s", path)
@@ -166,7 +169,7 @@ func loadConfig(path string, ov appconfig.Overrides, logger *log.Logger) (appcon
 	} else if !ov.IsZero() {
 		logger.Printf("已用命令行参数覆盖配置（文件本身未被修改）: SNI=%s", cfg.Tunnel.SNI)
 	}
-	return cfg, nil
+	return cfg, created, nil
 }
 
 func fileExists(path string) bool {
@@ -177,16 +180,18 @@ func fileExists(path string) bool {
 func runProxy(args []string, logger *log.Logger) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	var (
-		cfgPath   string
-		endpoints string
-		sni       string
-		mode      string
-		forceNew  bool
-		license   string
-		showCreds bool
+		cfgPath       string
+		endpoints     string
+		sni           string
+		mode          string
+		testEndpoints bool
+		forceNew      bool
+		license       string
+		showCreds     bool
 	)
 	addConfigFlag(flags, &cfgPath)
 	addOverrideFlags(flags, &endpoints, &sni, &mode)
+	flags.BoolVar(&testEndpoints, "test", false, "启动前扫描并实测最快 endpoint（首次启动会把结果写入配置）")
 	flags.BoolVar(&forceNew, "register", false, "账号配置缺失时强制重新注册")
 	flags.StringVar(&license, "license", "", "注册后绑定的 WARP+ 许可证（可选）")
 	flags.BoolVar(&showCreds, "creds", false, "启动时打印代理凭据")
@@ -194,7 +199,7 @@ func runProxy(args []string, logger *log.Logger) error {
 		return err
 	}
 
-	cfg, err := loadConfig(cfgPath, overridesFrom(endpoints, sni, mode), logger)
+	cfg, created, err := loadConfig(cfgPath, overridesFrom(endpoints, sni, mode), logger)
 	if err != nil {
 		return err
 	}
@@ -212,6 +217,14 @@ func runProxy(args []string, logger *log.Logger) error {
 	}
 	if err := usqueconfig.LoadConfig(accountPath); err != nil {
 		return fmt.Errorf("加载 WARP 账号配置失败: %w", err)
+	}
+
+	if testEndpoints {
+		cfg, err = runEndpointScan(ctx, cfg, cfgPath, created, logger)
+		if err != nil {
+			// 扫描失败不应该让代理起不来：退回原配置继续。
+			logger.Printf("警告: 端点优选失败，继续使用原有配置: %v", err)
+		}
 	}
 
 	endpointPool, err := buildEndpoints(cfg)
@@ -316,7 +329,7 @@ func runRegister(args []string, logger *log.Logger) error {
 		return err
 	}
 
-	cfg, err := loadConfig(cfgPath, appconfig.Overrides{}, logger)
+	cfg, _, err := loadConfig(cfgPath, appconfig.Overrides{}, logger)
 	if err != nil {
 		return err
 	}
@@ -350,7 +363,7 @@ func runCreds(args []string, logger *log.Logger) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := loadConfig(cfgPath, overridesFrom(endpoints, sni, mode), logger)
+	cfg, _, err := loadConfig(cfgPath, overridesFrom(endpoints, sni, mode), logger)
 	if err != nil {
 		return err
 	}
@@ -605,4 +618,70 @@ func absolute(path string) string {
 		return path
 	}
 	return abs
+}
+
+// runEndpointScan probes and measures WARP endpoints, then (on a first run,
+// where the configuration was just created) persists the ranked pool.
+//
+// A scan failure is reported by the caller and must not stop the proxy: the
+// point of the scan is to improve the defaults, not to be a prerequisite.
+func runEndpointScan(ctx context.Context, cfg appconfig.Config, cfgPath string, created bool, logger *log.Logger) (appconfig.Config, error) {
+	modes := make([]tunnel.Mode, 0, len(cfg.Scan.Modes))
+	for _, m := range cfg.Scan.Modes {
+		switch strings.ToLower(strings.TrimSpace(m)) {
+		case "quic", "h3":
+			modes = append(modes, tunnel.ModeQUIC)
+		case "http2", "h2":
+			modes = append(modes, tunnel.ModeHTTP2)
+		}
+	}
+
+	opts := scan.Options{
+		Candidates:   cfg.Scan.Candidates,
+		CIDR:         cfg.Scan.CIDR,
+		Modes:        modes,
+		SNI:          cfg.Tunnel.SNI,
+		DNS:          cfg.Tunnel.DNS,
+		Insecure:     cfg.Tunnel.Insecure,
+		MTU:          cfg.Tunnel.MTU,
+		TopN:         cfg.Scan.TopN,
+		ProbeGap:     cfg.Scan.ProbeGapDuration(),
+		ProbeTimeout: cfg.Scan.ProbeTimeoutDuration(),
+		SpeedGap:     cfg.Scan.SpeedGapDuration(),
+		ProbeBytes:   cfg.Scan.ProbeBytes,
+		URL:          cfg.Scan.URL,
+		Account:      usqueconfig.AppConfig,
+		Logger:       logger,
+	}
+
+	logger.Printf("=== 端点优选（SNI %s）===", cfg.Tunnel.SNI)
+	results, err := scan.Run(ctx, opts)
+	if err != nil {
+		return cfg, err
+	}
+
+	logger.Printf("=== 优选结果 ===")
+	for i, r := range results {
+		logger.Printf("  %d. %-22s %-6s %.2f MB/s  握手 %d ms",
+			i+1, r.Endpoint, r.Mode, r.MBps, r.Latency.Milliseconds())
+	}
+
+	best := results[0]
+	logger.Printf("最优: %s via %s = %.2f MB/s", best.Endpoint, best.Mode, best.MBps)
+
+	if !created {
+		logger.Printf("配置已存在，按约定不改动文件。若要采用该结果，可手动设置 tunnel.endpoints 为上面的列表。")
+		return cfg, nil
+	}
+
+	pool := make([]string, 0, len(results))
+	for _, r := range results {
+		pool = append(pool, r.Endpoint.String())
+	}
+	cfg.Tunnel.Endpoints = pool
+	if err := appconfig.Save(cfgPath, cfg); err != nil {
+		return cfg, fmt.Errorf("写入优选结果失败: %w", err)
+	}
+	logger.Printf("首次启动，已把优选结果写入 %s: tunnel.endpoints = %v", cfgPath, pool)
+	return cfg, nil
 }

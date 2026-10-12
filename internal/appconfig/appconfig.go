@@ -168,12 +168,54 @@ type Tunnel struct {
 	Insecure bool `json:"insecure"`
 }
 
+// Scan configures the endpoint optimiser behind `marp -test`.
+//
+// The gaps are deliberately large: the Cloudflare edge rate limits bursts of
+// tunnel handshakes, and probing too fast produces mostly false negatives.
+type Scan struct {
+	// Candidates is the endpoint pool. Empty means the built-in list plus the
+	// endpoint stored in the account.
+	Candidates []string `json:"candidates"`
+	// CIDR optionally widens the sweep to a range (at most /24).
+	CIDR string `json:"cidr"`
+	// Modes to try, in order.
+	Modes []string `json:"modes"`
+	// TopN is how many handshake survivors go into the throughput stage.
+	TopN int `json:"top_n"`
+	// ProbeGap is the pause between handshake attempts.
+	ProbeGap string `json:"probe_gap"`
+	// ProbeTimeout bounds a single handshake.
+	ProbeTimeout string `json:"probe_timeout"`
+	// SpeedGap is the pause between throughput measurements.
+	SpeedGap string `json:"speed_gap"`
+	// ProbeBytes is how much to pull through each candidate tunnel.
+	ProbeBytes int64 `json:"probe_bytes"`
+	// URL is the download target; %d is replaced with ProbeBytes.
+	URL string `json:"url"`
+}
+
+// ProbeGapDuration parses Scan.ProbeGap.
+func (sc Scan) ProbeGapDuration() time.Duration {
+	return parseDuration(sc.ProbeGap, 1500*time.Millisecond)
+}
+
+// ProbeTimeoutDuration parses Scan.ProbeTimeout.
+func (sc Scan) ProbeTimeoutDuration() time.Duration {
+	return parseDuration(sc.ProbeTimeout, 8*time.Second)
+}
+
+// SpeedGapDuration parses Scan.SpeedGap.
+func (sc Scan) SpeedGapDuration() time.Duration {
+	return parseDuration(sc.SpeedGap, 5*time.Second)
+}
+
 // Config is the complete on-disk configuration.
 type Config struct {
 	Listen    Listen `json:"listen"`
 	Auth      Auth   `json:"auth"`
 	Warp      Warp   `json:"warp"`
 	Tunnel    Tunnel `json:"tunnel"`
+	Scan      Scan   `json:"scan"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -206,6 +248,16 @@ func Default() Config {
 			ConnectTimeout:       "15s",
 			QUICFailureThreshold: 3,
 			H2RetryInterval:      "5m",
+		},
+		Scan: Scan{
+			Candidates:   []string{},
+			Modes:        []string{"quic", "http2"},
+			TopN:         3,
+			ProbeGap:     "1.5s",
+			ProbeTimeout: "8s",
+			SpeedGap:     "5s",
+			ProbeBytes:   4 << 20,
+			URL:          "https://speed.cloudflare.com/__down?bytes=%d",
 		},
 	}
 }
@@ -313,6 +365,23 @@ func applyDefaults(in Config) (Config, bool) {
 	setIfEmpty(&out.Tunnel.ReconnectDelay, "1s")
 	setIfEmpty(&out.Tunnel.ConnectTimeout, "15s")
 	setIfEmpty(&out.Tunnel.H2RetryInterval, "5m")
+	setIfEmpty(&out.Scan.ProbeGap, "1.5s")
+	setIfEmpty(&out.Scan.ProbeTimeout, "8s")
+	setIfEmpty(&out.Scan.SpeedGap, "5s")
+	setIfEmpty(&out.Scan.URL, "https://speed.cloudflare.com/__down?bytes=%d")
+
+	if len(out.Scan.Modes) == 0 {
+		out.Scan.Modes = []string{"quic", "http2"}
+		changed = true
+	}
+	if out.Scan.TopN <= 0 {
+		out.Scan.TopN = 3
+		changed = true
+	}
+	if out.Scan.ProbeBytes <= 0 {
+		out.Scan.ProbeBytes = 4 << 20
+		changed = true
+	}
 
 	if out.Tunnel.Port <= 0 || out.Tunnel.Port > 65535 {
 		out.Tunnel.Port = 443

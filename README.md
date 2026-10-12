@@ -68,6 +68,7 @@ marp version            打印版本号
 | `-endpoints` | 覆盖端点池，逗号分隔的 `ip:port` |
 | `-sni` | 覆盖 TLS SNI，可伪装为其他域名 |
 | `-mode` | `auto`（默认）/ `quic` / `http2` |
+| `-test` | 启动前扫描并实测最快 endpoint（首次启动把结果写入配置；失败不阻塞启动） |
 | `-register` | 账号配置缺失时强制重新注册 |
 | `-license` | 注册后绑定 WARP+ 许可证 |
 
@@ -114,6 +115,28 @@ Connect-IP 握手。需要区分两个独立的失败原因：
 `162.159.198.2`），不要硬编码到配置里——留空 `endpoints` 让程序使用账号下发的地址即可。
 
 ---
+
+### 端点优选（`-test`）
+
+在受限网络里，账号下发的默认端点不一定可达、也不一定最快。`marp run -test` 会在启动代理前做一次真实测量：
+
+1. 对候选端点（内置列表 + 账号端点 + 可选 `scan.cidr` 网段）逐个做真实的 Connect-IP 握手——只有握手成功才算「可用」（ICMP 可达不代表边缘会服务 MASQUE），QUIC 优先、每个尝试之间带间隔（边缘对突发握手限流很凶）；
+2. 对握手通过的前 `scan.top_n` 个建立一次性隧道实测下载速度，同样串行带间隔；
+3. 按实测速度排序输出结果。
+
+首次启动（配置文件刚生成）会把优选结果写入 `tunnel.endpoints`；已有配置只打印建议、不改文件（想采用就手动更新 `tunnel.endpoints`，或删除该字段后重跑）。**扫描失败不会阻塞代理启动**，只会打印一条警告后继续。
+
+```bash
+marp run -test
+# === 端点优选（SNI consumer-masque-proxy.cloudflareclient.com）===
+#   握手可用 162.159.198.218:443  quic   握手 89 ms
+#   ...
+# === 优选结果 ===
+#   1. 162.159.198.218:443  quic   12.34 MB/s  握手 89 ms
+#   ...
+```
+
+常用调参（`scan` 配置段）：`candidates`（自定义候选池）、`cidr`（展开一个 /24，注意限流）、`top_n` / `probe_gap` / `probe_timeout` / `speed_gap` / `probe_bytes`。
 
 ## 传输策略：QUIC 优先 + HTTP/2 回退
 

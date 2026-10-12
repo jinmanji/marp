@@ -1,10 +1,15 @@
 name: build
 
-# 仅在「手动触发」或「发布 Release」时编译。
-#
-# 刻意不监听 push / pull_request / pull_request_target / schedule / workflow_call，
-# 因此普通提交不会触发任何构建，避免浪费 Actions 配额。
+# 触发策略：
+#   - push 到 main：只跑 test + 轻量 smoke（云端编译 linux/amd64 → ubuntu/Alpine
+#     冒烟 → 结果回传 ci-smoke 分支），不产出发布产物；
+#   - 手动触发 / 发布 Release：完整的多平台矩阵 + 校验和（+ 可选 Draft Release）。
+# 不监听 pull_request / schedule / workflow_call，避免浪费 Actions 配额。
 on:
+  # push 到 main：跑 test + 轻量 smoke（云端编译 linux/amd64 → ubuntu/Alpine
+  # 冒烟 → 结果回传 ci-smoke 分支）。完整多平台矩阵仍只在手动/release 时构建。
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -59,9 +64,73 @@ jobs:
       - name: go test
         run: go test ./...
 
+  # push 到 main 时的轻量云端验证：编译 linux/amd64 → ubuntu + Alpine 冒烟 →
+  # 把结果与校验值推送到 ci-smoke 分支（取件端无需 API token，git fetch 即可核对）。
+  smoke:
+    name: smoke (push)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: 编译 linux/amd64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=0.0.0-smoke-${GITHUB_SHA:0:7}" \
+            -o dist/marp-linux-amd64 .
+
+      - name: 冒烟（ubuntu）
+        run: |
+          set -eu
+          chmod +x dist/marp-linux-amd64
+          ./dist/marp-linux-amd64 version
+          ./dist/marp-linux-amd64 --help >/dev/null
+          # -test（端点优选）必须出现在 run 子命令的选项里
+          ./dist/marp-linux-amd64 run --help 2>&1 | grep -q -- "-test"
+          echo "run -test 选项存在"
+
+      - name: 冒烟（Alpine / musl）
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" alpine:3.20 /dist/marp-linux-amd64 version
+
+      - name: 回传验证结果到 ci-smoke 分支
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          mkdir -p ci-out
+          {
+            echo "commit: $SHA"
+            echo "time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "version: $(./dist/marp-linux-amd64 version | head -1)"
+            echo "smoke: ubuntu + alpine OK (run -test option present)"
+            echo "sha256: $(sha256sum dist/marp-linux-amd64 | cut -d' ' -f1)"
+          } > ci-out/smoke.txt
+          cat ci-out/smoke.txt
+          git config user.name "marp-ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan ci-smoke
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          git add -f ci-out/smoke.txt
+          git commit -m "smoke ${SHA}"
+          git push -f origin HEAD:ci-smoke
+
   build:
     name: ${{ matrix.artifact }}
     needs: test
+    # push 触发走轻量 smoke；完整多平台矩阵只在手动/release 时构建。
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

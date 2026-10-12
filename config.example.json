@@ -42,5 +42,16 @@
     "h2_retry_interval": "5m",
     "initial_packet_size": 0,
     "insecure": false
+  },
+  "scan": {
+    "candidates": [],
+    "cidr": "",
+    "modes": ["quic", "http2"],
+    "top_n": 3,
+    "probe_gap": "1.5s",
+    "probe_timeout": "8s",
+    "speed_gap": "5s",
+    "probe_bytes": 4194304,
+    "url": "https://speed.cloudflare.com/__down?bytes=%d"
   }
 }
