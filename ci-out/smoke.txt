@@ -1,0 +1,5 @@
+commit: c382635a21960278905a55fdf92f278e60a4369d
+time: 2026-10-12T12:48:32Z
+version: marp 0.0.0-smoke-c382635
+smoke: ubuntu + alpine OK (run -test option present)
+sha256: 67332eb759672a22deddbe258576b0202e9eaa7f3b02f92f58d13fe1af4414b8
