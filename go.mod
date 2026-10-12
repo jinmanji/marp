@@ -27,3 +27,7 @@ require (
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	gvisor.dev/gvisor v0.0.0-20260616165937-8e4bc62602eb // indirect
 )
+
+// [marp patch] QUIC 客户端 UDP socket 绑定到本机具体接口地址（避免托管平台
+// 把通配绑定误判为「异常开放端口」导致部署失败）；见 third_party/usque/api/masque.go。
+replace github.com/Diniboy1123/usque => ./third_party/usque
