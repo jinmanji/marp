@@ -54,7 +54,8 @@ jobs:
 
       - name: 确认代码已格式化
         run: |
-          unformatted="$(gofmt -l .)"
+          # third_party/ 为上游代码副本（保持原样，不参与本仓库的格式检查）。
+          unformatted="$(gofmt -l . | grep -v '^third_party/' || true)"
           if [ -n "$unformatted" ]; then
             echo "以下文件未通过 gofmt："
             echo "$unformatted"
